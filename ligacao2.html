@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PeerJS Video Call</title>
   <script src="https://unpkg.com/peerjs@1.3.1/dist/peerjs.min.js"></script>
 </head>
+
 <body>
   <h1>PeerJS Video Call</h1>
   <div>
@@ -16,6 +18,7 @@
     <label for="call-to-id">Chamar Peer ID:</label>
     <input type="text" id="call-to-id">
     <button id="call-btn">Chamar</button>
+    <button id="disconnect-btn">Desligar</button>
   </div>
   <div>
     <h2>Seu Vídeo</h2>
@@ -27,7 +30,6 @@
   </div>
 
   <script>
-    // Configurações do PeerJS
     const peer = new Peer('peer-B');
 
     const localVideo = document.getElementById('local-video');
@@ -35,36 +37,113 @@
     const peerIdInput = document.getElementById('peer-id');
     const callToIdInput = document.getElementById('call-to-id');
     const callBtn = document.getElementById('call-btn');
+    const disconnectBtn = document.getElementById('disconnect-btn');
 
-    // Quando o Peer estiver pronto e tiver um ID, atualize o input do ID Peer
+    const CALL_STATE = {
+      STARTED: 'callStarted',
+      ACCEPTED: 'callAccepted',
+      ENDED: 'callEnded',
+      RECEIVED: 'callReceived',
+      CONNECTED: 'callConnected'
+    };
+
+    var currentCall = undefined;
+
     peer.on('open', (id) => {
       console.log('Seu ID:', id);
       peerIdInput.value = id;
     });
 
-    // Obter o stream de vídeo local
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then(stream => {
         localVideo.srcObject = stream;
 
-        // Quando o botão de chamada for clicado
+        disconnectBtn.addEventListener('click', () => {
+          if (currentCall)
+            currentCall.close();
+        });
+
         callBtn.addEventListener('click', () => {
-          const callToId = callToIdInput.value;
+          let callToId = callToIdInput.value;
           if (callToId) {
-            const call = peer.call(callToId, stream);
+            let call = peer.call(callToId, stream);
             setupCallEventHandlers(call);
+            
+            let conn = peer.connect(callToId);
+
+            call.on('close', () => {
+              conn.send({ type: CALL_STATE.ENDED });
+              peer.disconnect();
+            });
+
+            conn.on('open', () => {
+              conn.send({ type: CALL_STATE.STARTED });
+            });
           }
         });
 
-        // Quando receber uma chamada
         peer.on('call', (call) => {
-          call.answer(stream);
-          setupCallEventHandlers(call);
+
+          let conn = peer.connect(call.peer);
+          conn.on('open', () => {
+            conn.send({ type: CALL_STATE.RECEIVED });
+          });
+
+          if (confirm('Aceitar chamada?')) {
+            currentCall = call;
+            call.answer(stream);
+            setupCallEventHandlers(call);
+
+            conn = peer.connect(call.peer);
+            conn.on('open', () => {
+              conn.send({ type: CALL_STATE.ACCEPTED });
+            });
+
+            call.on('close', () => {
+              conn.send({ type: CALL_STATE.ENDED });
+              peer.disconnect();
+            });
+
+            conn.on('open', () => {
+              conn.send({ type: CALL_STATE.CONNECTED });
+            });
+
+          } else {
+            let conn = peer.connect(call.peer);
+            conn.on('open', () => {
+              conn.send({ type: CALL_STATE.ENDED });
+            });
+          }
+        });
+
+        peer.on('connection', (conn) => {
+          conn.on('data', (data) => {
+            switch (data.type) {
+              case CALL_STATE.STARTED:
+                console.log('Chamada iniciada por:', conn.peer);
+                break;
+              case CALL_STATE.RECEIVED:
+                console.log('Chamada recebida por:', conn.peer);
+                break;
+              case CALL_STATE.ACCEPTED:
+                console.log('Chamada aceita por:', conn.peer);
+                break;
+              case CALL_STATE.CONNECTED:
+                console.log('Chamada conectada em:', conn.peer);
+                break;
+              case CALL_STATE.ENDED:
+                console.log('Chamada encerrada por:', conn.peer);
+                break;
+              default:
+                console.log('Mensagem recebida:', data);
+            }
+          });
         });
       })
       .catch(error => {
         console.error('Erro ao acessar a câmera e o microfone:', error);
       });
+
 
     function setupCallEventHandlers(call) {
       call.on('stream', (remoteStream) => {
@@ -73,6 +152,10 @@
 
       call.on('close', () => {
         console.log('Chamada encerrada');
+        const conn = peer.connect(call.peer);
+        conn.on('open', () => {
+          conn.send({ type: CALL_STATE.ENDED });
+        });
       });
 
       call.on('error', (err) => {
@@ -80,5 +163,7 @@
       });
     }
   </script>
+
 </body>
+
 </html>

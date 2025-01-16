@@ -35,7 +35,7 @@
         let conn;
         // Conecta ao Peer B quando o botão de conectar for clicado
         document.getElementById('connect-button').addEventListener('click', () => {
-            const peerId = document.getElementById('peer-id-input').value;
+            let peerId = document.getElementById('peer-id-input').value;
             conn = peer.connect(peerId);
 
 
